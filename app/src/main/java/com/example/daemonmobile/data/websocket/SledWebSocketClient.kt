@@ -286,11 +286,12 @@ class SledWebSocketClient {
         webSocket?.send(gson.toJson(msg))
     }
 
-    /** Send a ToolApprovalResponse with correlationId + approved (canonical contract) */
-    fun sendToolApprovalResponse(correlationId: String, approved: Boolean) {
+    /** Send a ToolApprovalResponse with correlationId + approved + outcome (canonical contract) */
+    fun sendToolApprovalResponse(correlationId: String, approved: Boolean, outcome: String = "proceed_once") {
         val payloadMap = mutableMapOf<String, Any>(
             "correlationId" to correlationId,
-            "approved" to approved
+            "approved" to approved,
+            "outcome" to outcome
         )
 
         val msg = mapOf(

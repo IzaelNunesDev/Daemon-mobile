@@ -364,15 +364,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         // UI emits: once | session | deny. Keep legacy aliases for compatibility.
         val normalizedChoice = choice.trim().lowercase()
-        val approved = normalizedChoice in listOf(
-            "once", "session", // current ToolApprovalCard values
-            "yes", "approve", "allow", "y", "sim" // legacy aliases
-        )
+        val outcome = when (normalizedChoice) {
+            "session" -> "proceed_always"
+            "deny", "no", "n", "nao", "não" -> "cancel"
+            else -> "proceed_once" // "once", "yes", "approve", etc.
+        }
+        val approved = outcome != "cancel"
         if (correlationId != null) {
-            wsClient.sendToolApprovalResponse(correlationId, approved)
+            wsClient.sendToolApprovalResponse(correlationId, approved, outcome)
         } else {
             Log.w("ChatVM", "No correlationId for tool approval — daemon may not route this correctly")
-            wsClient.sendToolApprovalResponse(toolId, approved)  // fallback with toolId
+            wsClient.sendToolApprovalResponse(toolId, approved, outcome)  // fallback with toolId
         }
         _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Processando...")
     }
