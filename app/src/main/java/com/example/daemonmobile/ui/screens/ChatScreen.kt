@@ -30,6 +30,9 @@ import com.example.daemonmobile.ui.theme.*
 import com.example.daemonmobile.ui.viewmodels.ChatMessage
 import com.example.daemonmobile.ui.viewmodels.ChatViewModel
 import com.example.daemonmobile.ui.viewmodels.ChatViewModelFactory
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 @Composable
 fun ChatScreen(
@@ -43,14 +46,38 @@ fun ChatScreen(
 
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     var selectedLogLines by remember { mutableStateOf<List<String>?>(null) }
+    var followStream by remember { mutableStateOf(true) }
+
+    val streamTailLength = (uiState.messages.lastOrNull() as? ChatMessage.StreamChunkMsg)?.accumulated?.length ?: -1
+    val isAtBottom by remember(uiState.messages, listState) {
+        derivedStateOf {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            val total = uiState.messages.size
+            total == 0 || lastVisible >= total - 1
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.connect()
     }
 
-    LaunchedEffect(uiState.messages.size) {
-        if (uiState.messages.isNotEmpty()) {
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress to isAtBottom }
+            .distinctUntilChanged()
+            .collectLatest { (isScrolling, atBottom) ->
+                if (isScrolling && !atBottom) {
+                    followStream = false
+                }
+                if (atBottom) {
+                    followStream = true
+                }
+            }
+    }
+
+    LaunchedEffect(uiState.messages.size, streamTailLength, followStream) {
+        if (uiState.messages.isNotEmpty() && followStream) {
             listState.animateScrollToItem(uiState.messages.size - 1)
         }
     }
@@ -87,174 +114,204 @@ fun ChatScreen(
         // ═══════════════════════════════════════════════════════
         // Chat Messages
         // ═══════════════════════════════════════════════════════
-        LazyColumn(
-            state = listState,
+        Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp),
-            contentPadding = PaddingValues(vertical = 10.dp)
         ) {
-            // Empty state
-            if (uiState.messages.isEmpty() && !uiState.isThinking) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 80.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.alpha(0.35f)
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp),
+                contentPadding = PaddingValues(vertical = 10.dp)
+            ) {
+                // Empty state
+                if (uiState.messages.isEmpty() && !uiState.isThinking) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 80.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = "⬡",
-                                color = Indigo,
-                                fontSize = 38.sp
-                            )
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Text(
-                                text = "Daemon ativo",
-                                color = T3,
-                                fontSize = 10.sp,
-                                fontFamily = MonoFamily,
-                                lineHeight = 18.sp
-                            )
-                            Text(
-                                text = "Envie uma mensagem",
-                                color = T3,
-                                fontSize = 10.sp,
-                                fontFamily = MonoFamily,
-                                lineHeight = 18.sp
-                            )
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.alpha(0.35f)
+                            ) {
+                                Text(
+                                    text = "⬡",
+                                    color = Indigo,
+                                    fontSize = 38.sp
+                                )
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Text(
+                                    text = "Daemon ativo",
+                                    color = T3,
+                                    fontSize = 10.sp,
+                                    fontFamily = MonoFamily,
+                                    lineHeight = 18.sp
+                                )
+                                Text(
+                                    text = "Envie uma mensagem",
+                                    color = T3,
+                                    fontSize = 10.sp,
+                                    fontFamily = MonoFamily,
+                                    lineHeight = 18.sp
+                                )
+                            }
                         }
+                    }
+                }
+
+                items(uiState.messages) { msg ->
+                    when (msg) {
+                        is ChatMessage.UserMessage -> UserMessageBubble(msg.text)
+                        is ChatMessage.SystemMessage -> SystemMessageBubble(msg.text)
+                        is ChatMessage.AssistantMessage -> AssistantChatBubble(
+                            text = msg.text,
+                            toolName = msg.toolName,
+                            toolCmd = msg.toolCmd,
+                            isSuccess = msg.isSuccess,
+                            timestamp = msg.timestamp
+                        )
+                        is ChatMessage.StreamChunkMsg -> AssistantChatBubble(
+                            text = msg.accumulated
+                        )
+                        is ChatMessage.ToolUseMsg -> ToolCard(
+                            toolName = msg.toolName,
+                            toolId = msg.toolId,
+                            parameters = msg.parameters,
+                            resultStatus = msg.resultStatus,
+                            resultOutput = msg.resultOutput,
+                            resultError = msg.resultError
+                        )
+                        is ChatMessage.StreamOutputMsg -> {
+                            Box(modifier = Modifier.clickable { selectedLogLines = msg.lines }) {
+                                StreamBubble(msg.lines)
+                            }
+                        }
+                        is ChatMessage.ToolApprovalRequestMsg -> {
+                            if (msg.isAnswered) {
+                                Text(
+                                    text = "⚡ Escolha autorização: ${msg.choice}",
+                                    color = T4,
+                                    fontSize = 9.sp,
+                                    fontFamily = MonoFamily,
+                                    modifier = Modifier.padding(vertical = 2.dp)
+                                )
+                            } else {
+                                ToolApprovalCard(
+                                    toolName = msg.toolName,
+                                    command = msg.command,
+                                    riskLevel = msg.riskLevel,
+                                    onChoice = { choice ->
+                                        viewModel.sendToolApproval(msg.toolId, choice)
+                                    }
+                                )
+                            }
+                        }
+                        is ChatMessage.AskUserMsg -> {
+                            if (msg.isAnswered) {
+                                Text("⚡ Formulário enviado", color = T4, fontSize = 9.sp, fontFamily = MonoFamily, modifier = Modifier.padding(vertical = 2.dp))
+                            } else {
+                                AskUserMultiFieldCard(
+                                    title = msg.title,
+                                    questions = msg.questions,
+                                    onSubmit = { answers ->
+                                        viewModel.sendAskUserResponse(answers)
+                                    }
+                                )
+                            }
+                        }
+                        is ChatMessage.BrowserAuthMsg -> {
+                            if (msg.isAnswered) {
+                                Text("⚡ Autenticação no navegador concluída", color = T4, fontSize = 9.sp, fontFamily = MonoFamily, modifier = Modifier.padding(vertical = 2.dp))
+                            } else {
+                                BrowserAuthCard(
+                                    url = msg.url,
+                                    code = msg.code,
+                                    instruction = msg.instruction,
+                                    onOpenBrowser = { url ->
+                                        viewModel.openBrowserOnPc(url)
+                                    },
+                                    onDone = {
+                                        viewModel.sendBrowserAuthResponse()
+                                    }
+                                )
+                            }
+                        }
+                        is ChatMessage.PromptInputMsg -> {
+                            if (msg.isAnswered) {
+                                // Show answered state
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 2.dp),
+                                    horizontalArrangement = Arrangement.Start
+                                ) {
+                                    Text(
+                                        text = if (msg.promptType == "password") "🔐 Senha enviada" else "⚡ Confirmado: ${msg.answeredText}",
+                                        color = T4,
+                                        fontSize = 9.sp,
+                                        fontFamily = MonoFamily
+                                    )
+                                }
+                            } else {
+                                ConfirmationCard(
+                                    promptType = msg.promptType,
+                                    label = msg.label,
+                                    options = msg.options,
+                                    hint = msg.hint,
+                                    onSubmit = { response ->
+                                        viewModel.sendPromptResponse(response)
+                                    }
+                                )
+                            }
+                        }
+                        is ChatMessage.ThinkingMessage -> ThinkingDots(stage = msg.stage)
+                        is ChatMessage.StreamErrorMsg -> ErrorBubble(text = msg.message)
+                        is ChatMessage.SessionInfoMsg -> {
+                            SystemMessageBubble("📡 Sessão: ${msg.model}")
+                        }
+                        is ChatMessage.PlanCardMsg -> PlanCard(
+                            plan = msg.plan,
+                            status = msg.status,
+                            onApprove = { viewModel.approvePlan(msg.plan) },
+                            onReject = { viewModel.rejectPlan(msg.plan.id) }
+                        )
+                        is ChatMessage.StepProgress -> StepProgressItem(
+                            stepIndex = msg.stepIndex,
+                            description = msg.description,
+                            output = msg.output,
+                            error = msg.error,
+                            isCompleted = msg.isCompleted
+                        )
                     }
                 }
             }
 
-            items(uiState.messages) { msg ->
-                when (msg) {
-                    is ChatMessage.UserMessage -> UserMessageBubble(msg.text)
-                    is ChatMessage.SystemMessage -> SystemMessageBubble(msg.text)
-                    is ChatMessage.AssistantMessage -> AssistantChatBubble(
-                        text = msg.text,
-                        toolName = msg.toolName,
-                        toolCmd = msg.toolCmd,
-                        isSuccess = msg.isSuccess,
-                        timestamp = msg.timestamp
-                    )
-                    is ChatMessage.StreamChunkMsg -> AssistantChatBubble(
-                        text = msg.accumulated
-                    )
-                    is ChatMessage.ToolUseMsg -> ToolCard(
-                        toolName = msg.toolName,
-                        toolId = msg.toolId,
-                        parameters = msg.parameters,
-                        resultStatus = msg.resultStatus,
-                        resultOutput = msg.resultOutput,
-                        resultError = msg.resultError
-                    )
-                    is ChatMessage.StreamOutputMsg -> {
-                        Box(modifier = Modifier.clickable { selectedLogLines = msg.lines }) {
-                            StreamBubble(msg.lines)
-                        }
-                    }
-                    is ChatMessage.ToolApprovalRequestMsg -> {
-                        if (msg.isAnswered) {
-                            Text(
-                                text = "⚡ Escolha autorização: ${msg.choice}",
-                                color = T4,
-                                fontSize = 9.sp,
-                                fontFamily = MonoFamily,
-                                modifier = Modifier.padding(vertical = 2.dp)
-                            )
-                        } else {
-                            ToolApprovalCard(
-                                toolName = msg.toolName,
-                                command = msg.command,
-                                riskLevel = msg.riskLevel,
-                                onChoice = { choice ->
-                                    viewModel.sendToolApproval(msg.toolId, choice)
+            if (uiState.messages.isNotEmpty() && !isAtBottom) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 14.dp)
+                        .background(Indigo.copy(alpha = 0.9f), RoundedCornerShape(20.dp))
+                        .clickable {
+                            followStream = true
+                            scope.launch {
+                                if (uiState.messages.isNotEmpty()) {
+                                    listState.animateScrollToItem(uiState.messages.size - 1)
                                 }
-                            )
-                        }
-                    }
-                    is ChatMessage.AskUserMsg -> {
-                        if (msg.isAnswered) {
-                            Text("⚡ Formulário enviado", color = T4, fontSize = 9.sp, fontFamily = MonoFamily, modifier = Modifier.padding(vertical = 2.dp))
-                        } else {
-                            AskUserMultiFieldCard(
-                                title = msg.title,
-                                questions = msg.questions,
-                                onSubmit = { answers ->
-                                    viewModel.sendAskUserResponse(answers)
-                                }
-                            )
-                        }
-                    }
-                    is ChatMessage.BrowserAuthMsg -> {
-                        if (msg.isAnswered) {
-                            Text("⚡ Autenticação no navegador concluída", color = T4, fontSize = 9.sp, fontFamily = MonoFamily, modifier = Modifier.padding(vertical = 2.dp))
-                        } else {
-                            BrowserAuthCard(
-                                url = msg.url,
-                                code = msg.code,
-                                instruction = msg.instruction,
-                                onOpenBrowser = { url ->
-                                    viewModel.openBrowserOnPc(url)
-                                },
-                                onDone = {
-                                    viewModel.sendBrowserAuthResponse()
-                                }
-                            )
-                        }
-                    }
-                    is ChatMessage.PromptInputMsg -> {
-                        if (msg.isAnswered) {
-                            // Show answered state
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 2.dp),
-                                horizontalArrangement = Arrangement.Start
-                            ) {
-                                Text(
-                                    text = if (msg.promptType == "password") "🔐 Senha enviada" else "⚡ Confirmado: ${msg.answeredText}",
-                                    color = T4,
-                                    fontSize = 9.sp,
-                                    fontFamily = MonoFamily
-                                )
                             }
-                        } else {
-                            ConfirmationCard(
-                                promptType = msg.promptType,
-                                label = msg.label,
-                                options = msg.options,
-                                hint = msg.hint,
-                                onSubmit = { response ->
-                                    viewModel.sendPromptResponse(response)
-                                }
-                            )
                         }
-                    }
-                    is ChatMessage.ThinkingMessage -> ThinkingDots(stage = msg.stage)
-                    is ChatMessage.StreamErrorMsg -> ErrorBubble(text = msg.message)
-                    is ChatMessage.SessionInfoMsg -> {
-                        SystemMessageBubble("📡 Sessão: ${msg.model}")
-                    }
-                    is ChatMessage.PlanCardMsg -> PlanCard(
-                        plan = msg.plan,
-                        status = msg.status,
-                        onApprove = { viewModel.approvePlan(msg.plan) },
-                        onReject = { viewModel.rejectPlan(msg.plan.id) }
-                    )
-                    is ChatMessage.StepProgress -> StepProgressItem(
-                        stepIndex = msg.stepIndex,
-                        description = msg.description,
-                        output = msg.output,
-                        error = msg.error,
-                        isCompleted = msg.isCompleted
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "↓ Nova mensagem",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontFamily = MonoFamily
                     )
                 }
             }

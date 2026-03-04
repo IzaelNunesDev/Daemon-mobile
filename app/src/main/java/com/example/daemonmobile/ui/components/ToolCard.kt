@@ -30,6 +30,14 @@ fun ToolCard(
 ) {
     var isExpanded by remember { mutableStateOf(false) }
     val hasResult = resultStatus != null
+    val paramLines = remember(parameters) {
+        parameters
+            ?.split("\n")
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?: emptyList()
+    }
+    val hasExpandableContent = hasResult || paramLines.size > 1
 
     Column(
         modifier = Modifier
@@ -45,7 +53,7 @@ fun ToolCard(
                     Indigo.copy(alpha = 0.04f),
                     RoundedCornerShape(8.dp)
                 )
-                .clickable { if (hasResult) isExpanded = !isExpanded }
+                .clickable { if (hasExpandableContent) isExpanded = !isExpanded }
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -75,8 +83,9 @@ fun ToolCard(
 
             // Parameters (truncated)
             if (parameters != null) {
+                val summary = if (paramLines.isNotEmpty()) paramLines.first() else parameters
                 Text(
-                    text = parameters,
+                    text = summary,
                     color = T3,
                     fontSize = 9.sp,
                     fontFamily = MonoFamily,
@@ -99,11 +108,17 @@ fun ToolCard(
                     fontWeight = FontWeight.Bold,
                     fontFamily = MonoFamily
                 )
+            } else if (paramLines.size > 1) {
+                Text(
+                    text = if (isExpanded) "−" else "+",
+                    color = T3,
+                    fontSize = 11.sp,
+                    fontFamily = MonoFamily
+                )
             }
         }
 
-        // Expanded result
-        if (isExpanded && hasResult) {
+        if (isExpanded && (paramLines.size > 1 || hasResult)) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -111,22 +126,43 @@ fun ToolCard(
                     .background(Bg0, RoundedCornerShape(0.dp, 0.dp, 8.dp, 8.dp))
                     .padding(horizontal = 10.dp, vertical = 8.dp)
             ) {
-                if (resultError != null) {
-                    Text(
-                        text = resultError,
-                        color = Red,
-                        fontSize = 10.sp,
-                        fontFamily = MonoFamily,
-                        lineHeight = 15.sp
-                    )
-                } else if (resultOutput != null) {
-                    Text(
-                        text = resultOutput,
-                        color = TerminalGreen,
-                        fontSize = 10.sp,
-                        fontFamily = MonoFamily,
-                        lineHeight = 15.sp
-                    )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (paramLines.size > 1) {
+                        Text(
+                            text = "Parâmetros",
+                            color = Indigo,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = MonoFamily
+                        )
+                        paramLines.forEach { line ->
+                            Text(
+                                text = "• $line",
+                                color = T3,
+                                fontSize = 9.sp,
+                                fontFamily = MonoFamily,
+                                lineHeight = 14.sp
+                            )
+                        }
+                    }
+
+                    if (resultError != null) {
+                        Text(
+                            text = resultError,
+                            color = Red,
+                            fontSize = 10.sp,
+                            fontFamily = MonoFamily,
+                            lineHeight = 15.sp
+                        )
+                    } else if (resultOutput != null) {
+                        Text(
+                            text = resultOutput,
+                            color = TerminalGreen,
+                            fontSize = 10.sp,
+                            fontFamily = MonoFamily,
+                            lineHeight = 15.sp
+                        )
+                    }
                 }
             }
         }

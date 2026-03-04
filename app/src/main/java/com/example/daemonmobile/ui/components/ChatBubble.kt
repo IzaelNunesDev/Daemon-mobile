@@ -1,8 +1,12 @@
 package com.example.daemonmobile.ui.components
 
+import android.widget.Toast
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -10,17 +14,26 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.daemonmobile.ui.theme.*
+import java.time.Instant
+import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
@@ -38,6 +51,7 @@ fun UserMessageBubble(text: String) {
         Box(
             modifier = Modifier
                 .widthIn(max = 280.dp)
+                .copyOnLongPress(text)
                 .background(
                     brush = Brush.linearGradient(listOf(Indigo, Violet)),
                     shape = RoundedCornerShape(14.dp, 4.dp, 14.dp, 14.dp)
@@ -84,11 +98,11 @@ fun AssistantChatBubble(
         } else {
             Brush.linearGradient(listOf(Bg2, Bg1))
         }
-        val borderColor = if (isSuccess) Neon.copy(alpha = 0.3f) else B1
 
         Box(
             modifier = Modifier
                 .widthIn(max = 300.dp)
+                .copyOnLongPress(text)
                 .background(bgBrush, RoundedCornerShape(4.dp, 14.dp, 14.dp, 14.dp))
                 .background(Color.Transparent) // overlay
                 .padding(1.dp)
@@ -99,37 +113,135 @@ fun AssistantChatBubble(
                     .padding(horizontal = 12.dp, vertical = 9.dp)
             ) {
                 Column {
-                    Row {
-                        if (isSuccess) {
-                            Text(
-                                text = "✓ ",
-                                color = Neon,
-                                fontSize = 12.sp,
-                                fontFamily = MonoFamily
-                            )
-                        }
+                    if (isSuccess) {
                         Text(
-                            text = text,
-                            color = if (isSuccess) Color(0xFFB8FFD8) else T2,
-                            fontSize = 12.sp,
-                            lineHeight = 18.sp,
-                            fontFamily = MonoFamily
+                            text = "✓ concluído",
+                            color = Neon,
+                            fontSize = 10.sp,
+                            fontFamily = MonoFamily,
+                            modifier = Modifier.padding(bottom = 4.dp)
                         )
                     }
+                    MarkdownMessageText(
+                        text = text,
+                        textColor = if (isSuccess) Color(0xFFB8FFD8) else T2
+                    )
                     if (timestamp != null) {
-                        Spacer(modifier = Modifier.height(4.dp))
+                        val formatted = formatTimestamp(timestamp)
+                        if (formatted.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = formatted,
+                                color = T3,
+                                fontSize = 9.sp,
+                                fontFamily = MonoFamily,
+                                modifier = Modifier.align(Alignment.End)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarkdownMessageText(text: String, textColor: Color) {
+    val blocks = remember(text) { parseMarkdownBlocks(text) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        blocks.forEach { block ->
+            when (block) {
+                is MarkdownBlock.TextBlock -> {
+                    Text(
+                        text = parseInlineBold(block.content),
+                        color = textColor,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        fontFamily = MonoFamily
+                    )
+                }
+                is MarkdownBlock.CodeBlock -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF10131F), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
                         Text(
-                            text = formatTimestamp(timestamp),
-                            color = T3,
-                            fontSize = 9.sp,
-                            fontFamily = MonoFamily,
-                            modifier = Modifier.align(Alignment.End)
+                            text = block.content.trimEnd(),
+                            color = TerminalGreen,
+                            fontSize = 11.sp,
+                            lineHeight = 17.sp,
+                            fontFamily = MonoFamily
                         )
                     }
                 }
             }
         }
     }
+}
+
+private sealed class MarkdownBlock {
+    data class TextBlock(val content: String) : MarkdownBlock()
+    data class CodeBlock(val content: String) : MarkdownBlock()
+}
+
+private fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
+    val blocks = mutableListOf<MarkdownBlock>()
+    val regex = Regex("(?s)```(?:\\w+)?\\n(.*?)```")
+    var cursor = 0
+    regex.findAll(text).forEach { match ->
+        if (match.range.first > cursor) {
+            val plain = text.substring(cursor, match.range.first).trim('\n')
+            if (plain.isNotBlank()) blocks.add(MarkdownBlock.TextBlock(plain))
+        }
+        val code = match.groupValues.getOrElse(1) { "" }
+        if (code.isNotBlank()) blocks.add(MarkdownBlock.CodeBlock(code))
+        cursor = match.range.last + 1
+    }
+    if (cursor < text.length) {
+        val tail = text.substring(cursor).trim('\n')
+        if (tail.isNotBlank()) blocks.add(MarkdownBlock.TextBlock(tail))
+    }
+    if (blocks.isEmpty()) blocks.add(MarkdownBlock.TextBlock(text))
+    return blocks
+}
+
+private fun parseInlineBold(text: String): AnnotatedString {
+    val regex = Regex("\\*\\*(.+?)\\*\\*")
+    val builder = buildAnnotatedString {
+        var cursor = 0
+        regex.findAll(text).forEach { match ->
+            if (match.range.first > cursor) {
+                append(text.substring(cursor, match.range.first))
+            }
+            pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+            append(match.groupValues[1])
+            pop()
+            cursor = match.range.last + 1
+        }
+        if (cursor < text.length) {
+            append(text.substring(cursor))
+        }
+    }
+    return builder
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+private fun Modifier.copyOnLongPress(text: String): Modifier = composed {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val interactionSource = remember { MutableInteractionSource() }
+
+    this.combinedClickable(
+        interactionSource = interactionSource,
+        indication = null,
+        onClick = {},
+        onLongClick = {
+            clipboard.setText(AnnotatedString(text))
+            Toast.makeText(context, "Texto copiado", Toast.LENGTH_SHORT).show()
+        }
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -276,7 +388,9 @@ fun SystemMessageBubble(text: String) {
         Surface(
             shape = RoundedCornerShape(8.dp),
             color = SurfaceLight.copy(alpha = 0.4f),
-            modifier = Modifier.animateContentSize()
+            modifier = Modifier
+                .animateContentSize()
+                .copyOnLongPress(text)
         ) {
             Text(
                 text = text,
@@ -310,6 +424,7 @@ fun QueryResultBubble(text: String, timestamp: String? = null) {
         Box(
             modifier = Modifier
                 .widthIn(max = 300.dp)
+                .copyOnLongPress(text)
                 .background(QueryResultBg, RoundedCornerShape(4.dp, 14.dp, 14.dp, 14.dp))
                 .padding(horizontal = 12.dp, vertical = 9.dp)
         ) {
@@ -322,13 +437,16 @@ fun QueryResultBubble(text: String, timestamp: String? = null) {
                     fontFamily = MonoFamily
                 )
                 if (timestamp != null) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = formatTimestamp(timestamp),
-                        color = T3,
-                        fontSize = 9.sp,
-                        fontFamily = MonoFamily
-                    )
+                    val formatted = formatTimestamp(timestamp)
+                    if (formatted.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = formatted,
+                            color = T3,
+                            fontSize = 9.sp,
+                            fontFamily = MonoFamily
+                        )
+                    }
                 }
             }
         }
@@ -344,6 +462,7 @@ fun ErrorBubble(text: String) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
+            .copyOnLongPress(text)
             .background(ErrorBubbleBg, RoundedCornerShape(8.dp))
             .padding(horizontal = 12.dp, vertical = 9.dp)
     ) {
@@ -376,10 +495,17 @@ fun TypingIndicator(stage: String) {
 
 // ── Helper ────────────────────────────────────────────────────
 private fun formatTimestamp(timestamp: String): String {
-    return try {
-        val zdt = ZonedDateTime.parse(timestamp)
-        zdt.format(DateTimeFormatter.ofPattern("HH:mm"))
-    } catch (e: Exception) {
-        ""
+    val formatter = DateTimeFormatter.ofPattern("HH:mm")
+    return runCatching {
+        ZonedDateTime.parse(timestamp).format(formatter)
+    }.recoverCatching {
+        Instant.parse(timestamp).atZone(ZoneId.systemDefault()).format(formatter)
+    }.getOrElse {
+        val marker = timestamp.indexOf('T')
+        if (marker in 1 until (timestamp.length - 5)) {
+            timestamp.substring(marker + 1).take(5)
+        } else {
+            ""
+        }
     }
 }

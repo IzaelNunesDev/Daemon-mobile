@@ -97,12 +97,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             addMessage(ChatMessage.ToolUseMsg(
                 toolName = toolUse.toolName,
                 toolId = toolUse.toolId,
-                parameters = toolUse.parameters?.let { params ->
-                    // Extract the first readable parameter for display
-                    params.entrySet().firstOrNull()?.let { entry ->
-                        "${entry.key}: ${entry.value.asString}"
-                    }
-                }
+                parameters = toolUse.parameters?.let { formatToolParameters(it) }
             ))
         }
 
@@ -636,6 +631,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             value.isJsonNull -> "null"
             value.isJsonPrimitive -> value.asJsonPrimitive.toString().trim('"')
             else -> value.toString()
+        }
+    }
+
+    private fun formatToolParameters(params: com.google.gson.JsonObject): String {
+        if (params.entrySet().isEmpty()) return ""
+        return params.entrySet().joinToString("\n") { entry ->
+            "${entry.key}: ${jsonToText(entry.value)}"
         }
     }
 }

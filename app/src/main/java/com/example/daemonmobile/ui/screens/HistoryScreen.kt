@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.example.daemonmobile.data.local.SledPreferences
 import com.example.daemonmobile.ui.theme.*
 import com.example.daemonmobile.ui.viewmodels.ArchivedChatSession
+import com.example.daemonmobile.ui.viewmodels.deleteArchivedChatSession
 import com.example.daemonmobile.ui.viewmodels.loadArchivedChatSessions
 import java.time.Instant
 import java.time.ZoneId
@@ -28,10 +31,20 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun HistoryScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
+    val prefs = remember { SledPreferences(context) }
     var sessions by remember { mutableStateOf<List<ArchivedChatSession>>(emptyList()) }
+    var search by remember { mutableStateOf("") }
+
+    val filtered = remember(sessions, search) {
+        val query = search.trim().lowercase()
+        if (query.isBlank()) sessions
+        else sessions.filter {
+            it.title.lowercase().contains(query) || it.preview.lowercase().contains(query)
+        }
+    }
 
     LaunchedEffect(Unit) {
-        sessions = loadArchivedChatSessions(SledPreferences(context))
+        sessions = loadArchivedChatSessions(prefs)
     }
 
     Column(
@@ -73,13 +86,44 @@ fun HistoryScreen(onNavigateBack: () -> Unit) {
                 .background(B1)
         )
 
+        OutlinedTextField(
+            value = search,
+            onValueChange = { search = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            singleLine = true,
+            placeholder = {
+                Text(
+                    text = "Buscar sessão...",
+                    color = T4,
+                    fontSize = 10.sp,
+                    fontFamily = MonoFamily
+                )
+            },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = Bg1,
+                unfocusedContainerColor = Bg1,
+                focusedBorderColor = B1,
+                unfocusedBorderColor = B1,
+                focusedTextColor = T1,
+                unfocusedTextColor = T1,
+                cursorColor = Indigo
+            ),
+            textStyle = androidx.compose.ui.text.TextStyle(
+                fontFamily = MonoFamily,
+                fontSize = 11.sp
+            ),
+            shape = RoundedCornerShape(10.dp)
+        )
+
         // Empty state
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
-            if (sessions.isEmpty()) {
+            if (filtered.isEmpty()) {
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -88,13 +132,17 @@ fun HistoryScreen(onNavigateBack: () -> Unit) {
                     Text("◈", color = T3, fontSize = 32.sp)
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Sem histórico",
+                        text = if (sessions.isEmpty()) "Sem histórico" else "Nenhum resultado",
                         color = T3,
                         fontSize = 10.sp,
                         fontFamily = MonoFamily
                     )
                     Text(
-                        text = "Inicie um novo chat para arquivar sessões",
+                        text = if (sessions.isEmpty()) {
+                            "Inicie um novo chat para arquivar sessões"
+                        } else {
+                            "Tente outro termo de busca"
+                        },
                         color = T4,
                         fontSize = 9.sp,
                         fontFamily = MonoFamily
@@ -106,8 +154,14 @@ fun HistoryScreen(onNavigateBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 4.dp)
                 ) {
-                    items(sessions) { session ->
-                        HistorySessionCard(session = session)
+                    items(filtered, key = { it.id }) { session ->
+                        HistorySessionCard(
+                            session = session,
+                            onDelete = {
+                                deleteArchivedChatSession(prefs, session.id)
+                                sessions = loadArchivedChatSessions(prefs)
+                            }
+                        )
                     }
                 }
             }
@@ -116,7 +170,7 @@ fun HistoryScreen(onNavigateBack: () -> Unit) {
 }
 
 @Composable
-private fun HistorySessionCard(session: ArchivedChatSession) {
+private fun HistorySessionCard(session: ArchivedChatSession, onDelete: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -148,6 +202,14 @@ private fun HistorySessionCard(session: ArchivedChatSession) {
                 color = T4,
                 fontSize = 8.sp,
                 fontFamily = MonoFamily
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "🗑",
+                color = T4,
+                fontSize = 11.sp,
+                fontFamily = MonoFamily,
+                modifier = Modifier.clickable { onDelete() }
             )
         }
 
