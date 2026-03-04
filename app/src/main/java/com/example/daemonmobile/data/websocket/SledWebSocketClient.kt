@@ -30,6 +30,9 @@ class SledWebSocketClient {
     var onChatMessageReceived: ((ChatMessagePayload) -> Unit)? = null
     var onResponseReceived: ((ResponsePayload) -> Unit)? = null
     var onModelInfo: ((ModelInfoPayload) -> Unit)? = null
+    var onToolApprovalRequest: ((ToolApprovalRequestPayload) -> Unit)? = null
+    var onAskUser: ((AskUserPayload) -> Unit)? = null
+    var onBrowserAuth: ((BrowserAuthPayload) -> Unit)? = null
 
     init {
         val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
@@ -192,6 +195,21 @@ class SledWebSocketClient {
                                 ))
                             }
                         }
+                        "ToolApprovalRequest" -> {
+                            if (payload != null) {
+                                onToolApprovalRequest?.invoke(gson.fromJson(payload, ToolApprovalRequestPayload::class.java))
+                            }
+                        }
+                        "AskUser" -> {
+                            if (payload != null) {
+                                onAskUser?.invoke(gson.fromJson(payload, AskUserPayload::class.java))
+                            }
+                        }
+                        "BrowserAuth" -> {
+                            if (payload != null) {
+                                onBrowserAuth?.invoke(gson.fromJson(payload, BrowserAuthPayload::class.java))
+                            }
+                        }
                         else -> {
                             Log.w("SledWS", "Unknown message type: $type")
                         }
@@ -227,6 +245,33 @@ class SledWebSocketClient {
         val msg = mapOf(
             "type" to "Command",
             "payload" to mapOf("name" to name, "args" to args)
+        )
+        webSocket?.send(gson.toJson(msg))
+    }
+
+    /** Send a ToolApprovalResponse */
+    fun sendToolApprovalResponse(toolId: String, choice: String) {
+        val msg = mapOf(
+            "type" to "ToolApprovalResponse",
+            "payload" to mapOf("tool_id" to toolId, "choice" to choice)
+        )
+        webSocket?.send(gson.toJson(msg))
+    }
+
+    /** Send an AskUserResponse */
+    fun sendAskUserResponse(answers: Map<String, String>) {
+        val msg = mapOf(
+            "type" to "AskUserResponse",
+            "payload" to mapOf("answers" to answers)
+        )
+        webSocket?.send(gson.toJson(msg))
+    }
+
+    /** Send a StdinResponse */
+    fun sendStdinResponse(text: String) {
+        val msg = mapOf(
+            "type" to "StdinResponse",
+            "payload" to mapOf("text" to text)
         )
         webSocket?.send(gson.toJson(msg))
     }

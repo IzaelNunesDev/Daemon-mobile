@@ -102,3 +102,31 @@ data class ModelInfoPayload(
     @SerializedName("request_count") val requestCount: Int,
     @SerializedName("last_error") val lastError: String?
 )
+
+/** 12. ToolApprovalRequest — agent requests approval to execute a tool */
+data class ToolApprovalRequestPayload(
+    @SerializedName("tool_id") val toolId: String,
+    @SerializedName("tool_name") val toolName: String,
+    val command: String?,
+    @SerializedName("risk_level") val riskLevel: String?
+)
+
+/** 13. AskUser — multi-field wizard request */
+data class Question(
+    val id: String,
+    val text: String,
+    val type: String? // text, multiline, boolean, etc.
+)
+
+data class AskUserPayload(
+    val title: String,
+    val questions: List<Question>
+)
+
+/** 14. BrowserAuth — OAuth browser request */
+data class BrowserAuthPayload(
+    val url: String,
+    val code: String?,
+    val instruction: String?
+)
+

@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import com.example.daemonmobile.services.SledForegroundService
 
 // ═══════════════════════════════════════════════════════════════
 // Chat Messages — all possible items in the message list
@@ -59,6 +60,25 @@ sealed class ChatMessage {
         val error: String? = null,
         val isCompleted: Boolean = false
     ) : ChatMessage()
+    data class ToolApprovalRequestMsg(
+        val toolId: String,
+        val toolName: String,
+        val command: String?,
+        val riskLevel: String?,
+        val isAnswered: Boolean = false,
+        val choice: String? = null
+    ) : ChatMessage()
+    data class AskUserMsg(
+        val title: String,
+        val questions: List<Question>,
+        val isAnswered: Boolean = false
+    ) : ChatMessage()
+    data class BrowserAuthMsg(
+        val url: String,
+        val code: String?,
+        val instruction: String?,
+        val isAnswered: Boolean = false
+    ) : ChatMessage()
 }
 
 enum class PlanStatus { PENDING, APPROVED, REJECTED }
@@ -76,7 +96,7 @@ data class ChatUiState(
     val deviceName: String = ""
 )
 
-class ChatViewModel(context: Context) : ViewModel() {
+class ChatViewModel(private val context: Context) : ViewModel() {
     private val prefs = SledPreferences(context)
     private val wsClient = SledWebSocketClient()
 
@@ -95,6 +115,7 @@ class ChatViewModel(context: Context) : ViewModel() {
     private var wasEverConnected = false
 
     init {
+        loadHistory()
         wsClient.onConnectionStateChanged = { isConnected ->
             if (isConnected) {
                 reconnectAttempts = 0
@@ -193,6 +214,36 @@ class ChatViewModel(context: Context) : ViewModel() {
             addMessage(ChatMessage.StreamErrorMsg(
                 severity = error.severity,
                 message = error.message
+            ))
+        }
+
+        wsClient.onToolApprovalRequest = { req ->
+            removeThinking()
+            _uiState.value = _uiState.value.copy(isWaitingInput = true)
+            addMessage(ChatMessage.ToolApprovalRequestMsg(
+                toolId = req.toolId,
+                toolName = req.toolName,
+                command = req.command,
+                riskLevel = req.riskLevel
+            ))
+        }
+
+        wsClient.onAskUser = { req ->
+            removeThinking()
+            _uiState.value = _uiState.value.copy(isWaitingInput = true)
+            addMessage(ChatMessage.AskUserMsg(
+                title = req.title,
+                questions = req.questions
+            ))
+        }
+
+        wsClient.onBrowserAuth = { req ->
+            removeThinking()
+            _uiState.value = _uiState.value.copy(isWaitingInput = true)
+            addMessage(ChatMessage.BrowserAuthMsg(
+                url = req.url,
+                code = req.code,
+                instruction = req.instruction
             ))
         }
 
@@ -318,6 +369,11 @@ class ChatViewModel(context: Context) : ViewModel() {
             return
         }
         _uiState.value = _uiState.value.copy(connectionStatus = "Conectando...")
+        try {
+            SledForegroundService.start(context)
+        } catch (e: Exception) {
+            Log.e("ChatVM", "Failed to start foreground service", e)
+        }
         wsClient.connect(host, port, secret, deviceId)
     }
 
@@ -343,8 +399,46 @@ class ChatViewModel(context: Context) : ViewModel() {
             _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
         }
         // Send response as a Message
-        wsClient.sendMessage(response)
+        wsClient.sendStdinResponse(response)
         _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Processando...")
+    }
+
+    fun sendToolApproval(toolId: String, choice: String) {
+        val msgs = _uiState.value.messages.toMutableList()
+        val idx = msgs.indexOfLast { it is ChatMessage.ToolApprovalRequestMsg && !(it as ChatMessage.ToolApprovalRequestMsg).isAnswered }
+        if (idx >= 0) {
+            val msg = msgs[idx] as ChatMessage.ToolApprovalRequestMsg
+            if (msg.toolId == toolId) {
+                msgs[idx] = msg.copy(isAnswered = true, choice = choice)
+                _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
+            }
+        }
+        wsClient.sendToolApprovalResponse(toolId, choice)
+        _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Processando...")
+    }
+
+    fun sendAskUserResponse(answers: Map<String, String>) {
+        val msgs = _uiState.value.messages.toMutableList()
+        val idx = msgs.indexOfLast { it is ChatMessage.AskUserMsg && !(it as ChatMessage.AskUserMsg).isAnswered }
+        if (idx >= 0) {
+            val msg = msgs[idx] as ChatMessage.AskUserMsg
+            msgs[idx] = msg.copy(isAnswered = true)
+            _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
+        }
+        wsClient.sendAskUserResponse(answers)
+        _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Processando...")
+    }
+
+    fun sendBrowserAuthResponse() {
+        val msgs = _uiState.value.messages.toMutableList()
+        val idx = msgs.indexOfLast { it is ChatMessage.BrowserAuthMsg && !(it as ChatMessage.BrowserAuthMsg).isAnswered }
+        if (idx >= 0) {
+            val msg = msgs[idx] as ChatMessage.BrowserAuthMsg
+            msgs[idx] = msg.copy(isAnswered = true)
+            _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
+        }
+        wsClient.sendStdinResponse("\n")
+        _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Aguardando autenticação...")
     }
 
     fun sendQuickAction(command: String) {
@@ -395,6 +489,11 @@ class ChatViewModel(context: Context) : ViewModel() {
     fun disconnect() {
         reconnectJob?.cancel()
         reconnectAttempts = maxReconnectAttempts
+        try {
+            SledForegroundService.stop(context)
+        } catch (e: Exception) {
+            Log.e("ChatVM", "Failed to stop foreground service", e)
+        }
         wsClient.disconnect()
     }
 
@@ -427,6 +526,7 @@ class ChatViewModel(context: Context) : ViewModel() {
         val currentList = _uiState.value.messages.toMutableList()
         currentList.add(msg)
         _uiState.value = _uiState.value.copy(messages = currentList)
+        saveHistoryAsync()
     }
 
     private fun updatePlanStatus(planId: String, status: PlanStatus) {
@@ -434,6 +534,62 @@ class ChatViewModel(context: Context) : ViewModel() {
             if (it is ChatMessage.PlanCardMsg && it.plan.id == planId) it.copy(status = status) else it
         }
         _uiState.value = _uiState.value.copy(messages = msgs)
+        saveHistoryAsync()
+    }
+
+    private fun saveHistoryAsync() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val array = org.json.JSONArray()
+                // Save last 50 basic messages to not overwhelm prefs
+                _uiState.value.messages.takeLast(50).forEach { msg ->
+                    val obj = org.json.JSONObject()
+                    when (msg) {
+                        is ChatMessage.UserMessage -> {
+                            obj.put("type", "user")
+                            obj.put("text", msg.text)
+                        }
+                        is ChatMessage.AssistantMessage -> {
+                            obj.put("type", "assistant")
+                            obj.put("text", msg.text)
+                        }
+                        is ChatMessage.SystemMessage -> {
+                            obj.put("type", "system")
+                            obj.put("text", msg.text)
+                        }
+                        else -> return@forEach
+                    }
+                    array.put(obj)
+                }
+                prefs.chatHistory = array.toString()
+            } catch (e: Exception) {
+                Log.e("ChatVM", "Error saving history", e)
+            }
+        }
+    }
+
+    private fun loadHistory() {
+        try {
+            val history = prefs.chatHistory
+            if (!history.isNullOrBlank()) {
+                val array = org.json.JSONArray(history)
+                val msgs = mutableListOf<ChatMessage>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    when (obj.getString("type")) {
+                        "user" -> msgs.add(ChatMessage.UserMessage(obj.getString("text")))
+                        "assistant" -> msgs.add(ChatMessage.AssistantMessage(obj.getString("text")))
+                        "system" -> msgs.add(ChatMessage.SystemMessage(obj.getString("text")))
+                    }
+                }
+                if (msgs.isNotEmpty()) {
+                    msgs.add(ChatMessage.SystemMessage("--- Histórico de Sessão Anterior ---"))
+                    _uiState.value = _uiState.value.copy(messages = msgs)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("ChatVM", "Error loading history", e)
+        }
     }
 
     private fun parsePlanFromMetadata(metadata: com.google.gson.JsonObject): Plan {

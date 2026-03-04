@@ -3,6 +3,7 @@ package com.example.daemonmobile.ui.screens
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -41,6 +42,7 @@ fun ChatScreen(
 
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    var selectedLogLines by remember { mutableStateOf<List<String>?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.connect()
@@ -150,7 +152,58 @@ fun ChatScreen(
                         resultOutput = msg.resultOutput,
                         resultError = msg.resultError
                     )
-                    is ChatMessage.StreamOutputMsg -> StreamBubble(msg.lines)
+                    is ChatMessage.StreamOutputMsg -> {
+                        Box(modifier = Modifier.clickable { selectedLogLines = msg.lines }) {
+                            StreamBubble(msg.lines)
+                        }
+                    }
+                    is ChatMessage.ToolApprovalRequestMsg -> {
+                        if (msg.isAnswered) {
+                            Text(
+                                text = "⚡ Escolha autorização: ${msg.choice}",
+                                color = T4,
+                                fontSize = 9.sp,
+                                fontFamily = MonoFamily,
+                                modifier = Modifier.padding(vertical = 2.dp)
+                            )
+                        } else {
+                            ToolApprovalCard(
+                                toolName = msg.toolName,
+                                command = msg.command,
+                                riskLevel = msg.riskLevel,
+                                onChoice = { choice ->
+                                    viewModel.sendToolApproval(msg.toolId, choice)
+                                }
+                            )
+                        }
+                    }
+                    is ChatMessage.AskUserMsg -> {
+                        if (msg.isAnswered) {
+                            Text("⚡ Formulário enviado", color = T4, fontSize = 9.sp, fontFamily = MonoFamily, modifier = Modifier.padding(vertical = 2.dp))
+                        } else {
+                            AskUserMultiFieldCard(
+                                title = msg.title,
+                                questions = msg.questions,
+                                onSubmit = { answers ->
+                                    viewModel.sendAskUserResponse(answers)
+                                }
+                            )
+                        }
+                    }
+                    is ChatMessage.BrowserAuthMsg -> {
+                        if (msg.isAnswered) {
+                            Text("⚡ Autenticação no navegador concluída", color = T4, fontSize = 9.sp, fontFamily = MonoFamily, modifier = Modifier.padding(vertical = 2.dp))
+                        } else {
+                            BrowserAuthCard(
+                                url = msg.url,
+                                code = msg.code,
+                                instruction = msg.instruction,
+                                onDone = {
+                                    viewModel.sendBrowserAuthResponse()
+                                }
+                            )
+                        }
+                    }
                     is ChatMessage.PromptInputMsg -> {
                         if (msg.isAnswered) {
                             // Show answered state
@@ -204,22 +257,72 @@ fun ChatScreen(
         // ═══════════════════════════════════════════════════════
         // Input Bar — matching JSX InputBar
         // ═══════════════════════════════════════════════════════
-        InputBar(
-            text = inputText,
-            onTextChange = { inputText = it },
-            isDisabled = uiState.isWaitingInput,
-            isConnected = uiState.isConnected,
-            currentMode = uiState.currentMode,
-            onSend = {
-                val text = inputText.trim()
-                if (text.isNotBlank()) {
-                    viewModel.sendMessage(text)
-                    inputText = ""
-                } else if (!uiState.isConnected) {
-                    viewModel.retryConnection()
+        if (uiState.isThinking && !uiState.isWaitingInput) {
+            // Cancel Task Bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Bg1)
+                    .padding(vertical = 14.dp)
+                    .navigationBarsPadding(),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    modifier = Modifier
+                        .background(Red.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                        .border(1.dp, Red.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                        .clickable { viewModel.sendQuickAction("abort") }
+                        .padding(horizontal = 24.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("⏹", color = Red, fontSize = 14.sp)
+                    Text("Interromper", color = Red, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = MonoFamily)
                 }
             }
-        )
+        } else {
+            InputBar(
+                text = inputText,
+                onTextChange = { inputText = it },
+                isDisabled = uiState.isWaitingInput,
+                isConnected = uiState.isConnected,
+                currentMode = uiState.currentMode,
+                onSend = {
+                    val text = inputText.trim()
+                    if (text.isNotBlank()) {
+                        viewModel.sendMessage(text)
+                        inputText = ""
+                    } else if (!uiState.isConnected) {
+                        viewModel.retryConnection()
+                    }
+                }
+            )
+        }
+    }
+
+    // Terminal Bottom Sheet
+    selectedLogLines?.let { lines ->
+        @OptIn(ExperimentalMaterial3Api::class)
+        ModalBottomSheet(
+            onDismissRequest = { selectedLogLines = null },
+            containerColor = Bg0,
+            modifier = Modifier.navigationBarsPadding()
+        ) {
+            Column(modifier = Modifier.padding(16.dp).fillMaxHeight(0.8f)) {
+                Text(
+                    text = "TERMINAL OUPUT",
+                    color = TerminalGreen,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = MonoFamily,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                LiveTerminalView(
+                    logs = lines,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
     }
 }
 

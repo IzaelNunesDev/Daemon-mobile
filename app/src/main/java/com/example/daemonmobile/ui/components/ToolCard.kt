@@ -137,16 +137,20 @@ fun ToolCard(
  * Map tool names to icons matching the JSX design.
  */
 private fun getToolIcon(toolName: String): String {
-    return when (toolName) {
-        "shell" -> "▶"
-        "read_file" -> "◈"
-        "write_file" -> "◆"
-        "edit" -> "✎"
-        "grep" -> "◉"
-        "glob" -> "◉"
-        "ls" -> "▣"
-        "web_search" -> "◈"
-        "web_fetch" -> "◈"
-        else -> "▸"
+    val lowerName = toolName.lowercase()
+    
+    // Prefix or contains
+    if (lowerName.contains("browser") || lowerName.contains("puppeteer") || lowerName.contains("web")) return "☁"
+    if (lowerName.contains("git") || lowerName.contains("github")) return "⎇"
+    if (lowerName.contains("sql") || lowerName.contains("db") || lowerName.contains("postgres")) return "☰"
+    if (lowerName.contains("file") || lowerName.contains("fs") || lowerName.contains("read") || lowerName.contains("write")) return "▣"
+    
+    // Explicit matches
+    return when {
+        lowerName.startsWith("shell") || lowerName.startsWith("bash") || lowerName.startsWith("cmd") -> "▶"
+        lowerName.startsWith("edit") || lowerName.startsWith("replace") -> "✎"
+        lowerName.startsWith("search") || lowerName.startsWith("grep") || lowerName.startsWith("glob") -> "◉"
+        lowerName.startsWith("ls") || lowerName.startsWith("list") -> "▣"
+        else -> "⚡"
     }
 }
