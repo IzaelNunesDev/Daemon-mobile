@@ -69,7 +69,8 @@ data class PromptInputPayload(
     @SerializedName("prompt_type") val promptType: String,  // choice, text, yesno
     val label: String,
     val options: List<String>?,
-    val hint: String? = null
+    val hint: String? = null,
+    @SerializedName("correlation_id") val correlationId: String? = null
 )
 
 /** 8. StreamError — error notification */

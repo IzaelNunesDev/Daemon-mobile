@@ -28,17 +28,14 @@ data class QuickAction(
 )
 
 val QUICK_ACTIONS = listOf(
-    QuickAction("◈", "Screenshot", Cyan, "screenshot"),
-    QuickAction("◉", "Processos", Violet, "list_processes"),
-    QuickAction("◆", "Sysinfo", Indigo, "system_info"),
-    QuickAction("⬡", "Clipboard", Amber, "clipboard"),
-    QuickAction("▣", "Terminal", Neon, "terminal"),
-    QuickAction("◀", "Arquivos", Rose, "list_files")
+    QuickAction("◉", "Status", Neon, "get_status"),
+    QuickAction("▣", "Logs", Amber, "get_logs"),
+    QuickAction("◆", "Modelo", Indigo, "get_model_info"),
+    QuickAction("◈", "Config", Cyan, "get_settings")
 )
 
 /**
- * QuickActionsBar — horizontal scrollable bar with 6 colored action buttons.
- * Matches JSX QuickActionsBar exactly.
+ * QuickActionsBar — horizontal scrollable bar with only supported WS commands.
  */
 @Composable
 fun QuickActionsBar(

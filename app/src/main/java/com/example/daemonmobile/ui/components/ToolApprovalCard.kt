@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.daemonmobile.ui.theme.*
@@ -28,7 +29,7 @@ fun ToolApprovalCard(
     onChoice: (String) -> Unit
 ) {
     var selectedOption by remember { mutableStateOf<String?>(null) }
-    
+
     val riskColor = when (riskLevel?.lowercase()) {
         "high" -> Red
         "medium" -> Amber
@@ -103,59 +104,111 @@ fun ToolApprovalCard(
                     text = "$> $command",
                     color = TerminalGreen,
                     fontSize = 10.sp,
-                    fontFamily = MonoFamily
+                    fontFamily = MonoFamily,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
 
-        // Action Buttons
         val options = listOf(
             "once" to "Permitir uma vez",
             "session" to "Permitir nesta sessão",
             "deny" to "Negar"
         )
-        
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            options.forEach { (value, label) ->
-                val isDeny = value == "deny"
-                val baseColor = if (isDeny) Red else Neon
-                val interactionSource = remember { MutableInteractionSource() }
-                val isPressed by interactionSource.collectIsPressedAsState()
-                
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .scale(if (isPressed) 0.95f else 1f)
-                        .background(
-                            baseColor.copy(alpha = 0.1f),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .border(
-                            1.dp,
-                            baseColor.copy(alpha = 0.3f),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .clickable(interactionSource = interactionSource, indication = null) {
-                            if (selectedOption == null) {
-                                selectedOption = value
-                                onChoice(value)
-                            }
-                        }
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center
+
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val isCompact = maxWidth < 360.dp
+
+            if (isCompact) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        text = label,
-                        color = baseColor,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = MonoFamily
-                    )
+                    options.forEach { (value, label) ->
+                        ApprovalOptionButton(
+                            value = value,
+                            label = label,
+                            isCompact = true,
+                            selectedOption = selectedOption,
+                            onPick = { picked ->
+                                if (selectedOption == null) {
+                                    selectedOption = picked
+                                    onChoice(picked)
+                                }
+                            }
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    options.forEach { (value, label) ->
+                        ApprovalOptionButton(
+                            value = value,
+                            label = label,
+                            isCompact = false,
+                            selectedOption = selectedOption,
+                            modifier = Modifier.weight(1f),
+                            onPick = { picked ->
+                                if (selectedOption == null) {
+                                    selectedOption = picked
+                                    onChoice(picked)
+                                }
+                            }
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ApprovalOptionButton(
+    value: String,
+    label: String,
+    isCompact: Boolean,
+    selectedOption: String?,
+    modifier: Modifier = Modifier,
+    onPick: (String) -> Unit
+) {
+    val isDeny = value == "deny"
+    val baseColor = if (isDeny) Red else Neon
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val isSelected = selectedOption == value
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 40.dp)
+            .scale(if (isPressed) 0.97f else 1f)
+            .background(
+                if (isSelected) baseColor.copy(alpha = 0.2f) else baseColor.copy(alpha = 0.1f),
+                RoundedCornerShape(8.dp)
+            )
+            .border(
+                1.dp,
+                if (isSelected) baseColor.copy(alpha = 0.55f) else baseColor.copy(alpha = 0.3f),
+                RoundedCornerShape(8.dp)
+            )
+            .clickable(interactionSource = interactionSource, indication = null) {
+                onPick(value)
+            }
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = baseColor,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = MonoFamily,
+            maxLines = if (isCompact) 2 else 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

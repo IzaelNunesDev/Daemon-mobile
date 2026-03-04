@@ -1,23 +1,39 @@
 package com.example.daemonmobile.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.daemonmobile.data.local.SledPreferences
 import com.example.daemonmobile.ui.theme.*
+import com.example.daemonmobile.ui.viewmodels.ArchivedChatSession
+import com.example.daemonmobile.ui.viewmodels.loadArchivedChatSessions
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @Composable
 fun HistoryScreen(onNavigateBack: () -> Unit) {
+    val context = LocalContext.current
+    var sessions by remember { mutableStateOf<List<ArchivedChatSession>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        sessions = loadArchivedChatSessions(SledPreferences(context))
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -61,25 +77,108 @@ fun HistoryScreen(onNavigateBack: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(32.dp),
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("◈", color = T3, fontSize = 32.sp)
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "Sem histórico",
-                    color = T3,
-                    fontSize = 10.sp,
-                    fontFamily = MonoFamily
-                )
-                Text(
-                    text = "As sessões aparecerão aqui",
-                    color = T4,
-                    fontSize = 9.sp,
-                    fontFamily = MonoFamily
-                )
+            if (sessions.isEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text("◈", color = T3, fontSize = 32.sp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Sem histórico",
+                        color = T3,
+                        fontSize = 10.sp,
+                        fontFamily = MonoFamily
+                    )
+                    Text(
+                        text = "Inicie um novo chat para arquivar sessões",
+                        color = T4,
+                        fontSize = 9.sp,
+                        fontFamily = MonoFamily
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 4.dp)
+                ) {
+                    items(sessions) { session ->
+                        HistorySessionCard(session = session)
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun HistorySessionCard(session: ArchivedChatSession) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                Brush.linearGradient(listOf(Bg2, Bg1)),
+                RoundedCornerShape(12.dp)
+            )
+            .border(1.dp, B1, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = session.title,
+                color = T1,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = MonoFamily,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = formatSessionDate(session.updatedAt),
+                color = T4,
+                fontSize = 8.sp,
+                fontFamily = MonoFamily
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = session.preview,
+            color = T3,
+            fontSize = 9.sp,
+            fontFamily = MonoFamily,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = "${session.messageCount} mensagens",
+            color = T4,
+            fontSize = 8.sp,
+            fontFamily = MonoFamily
+        )
+    }
+}
+
+private fun formatSessionDate(epochMs: Long): String {
+    return try {
+        val instant = Instant.ofEpochMilli(epochMs)
+        val zoned = instant.atZone(ZoneId.systemDefault())
+        DateTimeFormatter.ofPattern("dd/MM HH:mm").format(zoned)
+    } catch (_: Exception) {
+        "--/-- --:--"
     }
 }

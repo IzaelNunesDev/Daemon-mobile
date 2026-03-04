@@ -18,7 +18,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -28,7 +30,6 @@ import com.example.daemonmobile.ui.theme.*
 import com.example.daemonmobile.ui.viewmodels.ChatMessage
 import com.example.daemonmobile.ui.viewmodels.ChatViewModel
 import com.example.daemonmobile.ui.viewmodels.ChatViewModelFactory
-import com.example.daemonmobile.ui.viewmodels.PlanStatus
 
 @Composable
 fun ChatScreen(
@@ -71,6 +72,8 @@ fun ChatScreen(
             onModeToggle = { mode ->
                 viewModel.setMode(mode)
             },
+            onHistoryClick = onNavigateToHistory,
+            onNewChatClick = { viewModel.startNewChat() },
             onSettingsClick = onNavigateToSettings
         )
 
@@ -313,7 +316,7 @@ fun ChatScreen(
         ) {
             Column(modifier = Modifier.padding(16.dp).fillMaxHeight(0.8f)) {
                 Text(
-                    text = "TERMINAL OUPUT",
+                    text = "TERMINAL OUTPUT",
                     color = TerminalGreen,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -339,29 +342,37 @@ private fun AppHeader(
     currentMode: String,
     currentModel: String,
     onModeToggle: (String) -> Unit,
+    onHistoryClick: () -> Unit,
+    onNewChatClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
+    val isCompact = LocalConfiguration.current.screenWidthDp < 390
+    val modeLabels = listOf(
+        "Padrão" to if (isCompact) "STD" else "Padrão",
+        "Avançado" to if (isCompact) "ADV" else "Avançado"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(
                 Brush.verticalGradient(listOf(Bg2, Bg1))
             )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(if (isCompact) 8.dp else 10.dp)
     ) {
         // SLED logo icon
         Box(
             modifier = Modifier
-                .size(36.dp)
+                .size(if (isCompact) 32.dp else 36.dp)
                 .background(
                     Brush.linearGradient(listOf(Indigo.copy(alpha = 0.8f), Violet.copy(alpha = 0.8f))),
                     RoundedCornerShape(12.dp)
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Text("⬡", fontSize = 16.sp, color = Color.White)
+            Text("⬡", fontSize = if (isCompact) 14.sp else 16.sp, color = Color.White)
         }
 
         // Name + status
@@ -369,7 +380,7 @@ private fun AppHeader(
             Text(
                 text = "SLED",
                 color = T1,
-                fontSize = 13.sp,
+                fontSize = if (isCompact) 12.sp else 13.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = MonoFamily,
                 letterSpacing = 1.sp
@@ -401,7 +412,7 @@ private fun AppHeader(
                     Text(
                         text = connectionStatus,
                         color = Neon,
-                        fontSize = 9.sp,
+                        fontSize = if (isCompact) 8.sp else 9.sp,
                         fontFamily = MonoFamily
                     )
                 } else {
@@ -415,10 +426,21 @@ private fun AppHeader(
                     Text(
                         text = connectionStatus,
                         color = T3,
-                        fontSize = 9.sp,
+                        fontSize = if (isCompact) 8.sp else 9.sp,
                         fontFamily = MonoFamily
                     )
                 }
+            }
+            if (currentModel.isNotBlank()) {
+                Text(
+                    text = currentModel,
+                    color = T4,
+                    fontSize = if (isCompact) 8.sp else 9.sp,
+                    fontFamily = MonoFamily,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
             }
         }
 
@@ -428,7 +450,7 @@ private fun AppHeader(
                 .background(Bg0, RoundedCornerShape(20.dp))
                 .padding(2.dp)
         ) {
-            listOf("Padrão", "Avançado").forEach { mode ->
+            modeLabels.forEach { (mode, label) ->
                 val isActive = currentMode == mode
                 val bgBrush = if (isActive) {
                     if (mode == "Avançado") Brush.linearGradient(listOf(Indigo, Violet))
@@ -441,12 +463,12 @@ private fun AppHeader(
                     modifier = Modifier
                         .background(bgBrush, RoundedCornerShape(18.dp))
                         .clickable { onModeToggle(mode) }
-                        .padding(horizontal = 9.dp, vertical = 4.dp)
+                        .padding(horizontal = if (isCompact) 7.dp else 9.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = mode,
+                        text = label,
                         color = if (isActive) T1 else T3,
-                        fontSize = 9.sp,
+                        fontSize = if (isCompact) 8.sp else 9.sp,
                         fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                         fontFamily = MonoFamily
                     )
@@ -454,14 +476,31 @@ private fun AppHeader(
             }
         }
 
-        // Settings icon
         Box(
             modifier = Modifier
-                .size(28.dp)
+                .size(if (isCompact) 24.dp else 28.dp)
+                .clickable { onHistoryClick() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("🕘", color = T3, fontSize = if (isCompact) 11.sp else 13.sp)
+        }
+
+        Box(
+            modifier = Modifier
+                .size(if (isCompact) 24.dp else 28.dp)
+                .clickable { onNewChatClick() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("＋", color = T3, fontSize = if (isCompact) 12.sp else 14.sp)
+        }
+
+        Box(
+            modifier = Modifier
+                .size(if (isCompact) 24.dp else 28.dp)
                 .clickable { onSettingsClick() },
             contentAlignment = Alignment.Center
         ) {
-            Text("⚙", color = T3, fontSize = 14.sp)
+            Text("⚙", color = T3, fontSize = if (isCompact) 12.sp else 14.sp)
         }
     }
 
@@ -486,6 +525,8 @@ private fun InputBar(
     currentMode: String,
     onSend: () -> Unit
 ) {
+    val isCompact = LocalConfiguration.current.screenWidthDp < 390
+
     // Top border
     Box(
         modifier = Modifier
@@ -498,11 +539,11 @@ private fun InputBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(Bg1)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(horizontal = if (isCompact) 8.dp else 12.dp, vertical = 10.dp)
             .navigationBarsPadding()
             .imePadding(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(if (isCompact) 6.dp else 8.dp)
     ) {
         // Text field
         OutlinedTextField(
@@ -550,7 +591,7 @@ private fun InputBar(
         val canSend = text.isNotBlank() || !isConnected
         Box(
             modifier = Modifier
-                .size(36.dp)
+                .size(if (isCompact) 34.dp else 36.dp)
                 .background(
                     if (canSend && !isDisabled) Brush.linearGradient(listOf(Indigo, Violet))
                     else Brush.linearGradient(listOf(Bg2, Bg2)),

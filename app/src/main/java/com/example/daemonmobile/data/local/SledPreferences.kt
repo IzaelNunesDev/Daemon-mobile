@@ -41,6 +41,10 @@ class SledPreferences(context: Context) {
     var chatHistory: String?
         get() = prefs.getString("chat_history", null)
         set(value) = prefs.edit().putString("chat_history", value).apply()
+
+    var chatArchive: String?
+        get() = prefs.getString("chat_archive", null)
+        set(value) = prefs.edit().putString("chat_archive", value).apply()
         
     fun clear() {
         val savedAutoApprove = autoApproveLowRisk

@@ -3,104 +3,28 @@ package com.example.daemonmobile.ui.viewmodels
 import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.daemonmobile.data.local.SledPreferences
 import com.example.daemonmobile.data.models.*
 import com.example.daemonmobile.data.websocket.SledWebSocketClient
+import com.example.daemonmobile.services.SledForegroundService
+import com.google.gson.JsonElement
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
-import com.example.daemonmobile.services.SledForegroundService
-
-// ═══════════════════════════════════════════════════════════════
-// Chat Messages — all possible items in the message list
-// ═══════════════════════════════════════════════════════════════
-sealed class ChatMessage {
-    data class UserMessage(val text: String) : ChatMessage()
-    data class SystemMessage(val text: String) : ChatMessage()
-    data class AssistantMessage(
-        val text: String,
-        val toolName: String? = null,
-        val toolCmd: String? = null,
-        val isSuccess: Boolean = false,
-        val timestamp: String? = null
-    ) : ChatMessage()
-    data class StreamChunkMsg(val accumulated: String) : ChatMessage()
-    data class ToolUseMsg(
-        val toolName: String,
-        val toolId: String,
-        val parameters: String? = null,
-        val resultStatus: String? = null,
-        val resultOutput: String? = null,
-        val resultError: String? = null
-    ) : ChatMessage()
-    data class StreamOutputMsg(val lines: List<String>) : ChatMessage()
-    data class PromptInputMsg(
-        val promptType: String,
-        val label: String,
-        val options: List<String>?,
-        val hint: String? = null,
-        val correlationId: String? = null,
-        val isAnswered: Boolean = false,
-        val answeredText: String? = null
-    ) : ChatMessage()
-    data class ThinkingMessage(val stage: String) : ChatMessage()
-    data class StreamErrorMsg(val severity: String, val message: String) : ChatMessage()
-    data class SessionInfoMsg(val sessionId: String, val model: String) : ChatMessage()
-    data class PlanCardMsg(
-        val plan: Plan,
-        val status: PlanStatus = PlanStatus.PENDING
-    ) : ChatMessage()
-    data class StepProgress(
-        val stepIndex: Int,
-        val description: String,
-        val output: String? = null,
-        val error: String? = null,
-        val isCompleted: Boolean = false
-    ) : ChatMessage()
-    data class ToolApprovalRequestMsg(
-        val toolId: String,
-        val toolName: String,
-        val command: String?,
-        val riskLevel: String?,
-        val correlationId: String? = null,
-        val isAnswered: Boolean = false,
-        val choice: String? = null
-    ) : ChatMessage()
-    data class AskUserMsg(
-        val title: String,
-        val questions: List<Question>,
-        val correlationId: String? = null,
-        val isAnswered: Boolean = false
-    ) : ChatMessage()
-    data class BrowserAuthMsg(
-        val url: String,
-        val code: String?,
-        val instruction: String?,
-        val correlationId: String? = null,
-        val isAnswered: Boolean = false
-    ) : ChatMessage()
-}
-
-enum class PlanStatus { PENDING, APPROVED, REJECTED }
-
-data class ChatUiState(
-    val messages: List<ChatMessage> = emptyList(),
-    val isConnected: Boolean = false,
-    val isThinking: Boolean = false,
-    val thinkingStage: String = "",
-    val connectionStatus: String = "Desconectado",
-    val currentMode: String = "Padrão",
-    val currentModel: String = "",
-    val sessionId: String = "",
-    val isWaitingInput: Boolean = false,
-    val deviceName: String = ""
-)
 
 class ChatViewModel(private val context: Context) : ViewModel() {
+    companion object {
+        private val SUPPORTED_QUICK_COMMANDS = setOf(
+            "get_status",
+            "get_logs",
+            "get_model_info",
+            "get_settings"
+        )
+    }
+
     private val prefs = SledPreferences(context)
     private val wsClient = SledWebSocketClient()
 
@@ -117,6 +41,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val baseDelayMs = 5000L
     private val maxDelayMs = 60000L
     private var wasEverConnected = false
+    private var suppressAutoReconnect = false
 
     init {
         loadHistory()
@@ -134,7 +59,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     isConnected = false,
                     connectionStatus = "Desconectado"
                 )
-                scheduleReconnect()
+                if (!suppressAutoReconnect) {
+                    scheduleReconnect()
+                }
             }
         }
 
@@ -204,12 +131,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         wsClient.onPromptInput = { prompt ->
             removeThinking()
-            _uiState.value = _uiState.value.copy(isWaitingInput = true)
+            val cId = prompt.correlationId ?: "unknown_${System.currentTimeMillis()}"
+            val newPending = _uiState.value.pendingActions + cId
+            _uiState.value = _uiState.value.copy(pendingActions = newPending)
             addMessage(ChatMessage.PromptInputMsg(
                 promptType = prompt.promptType,
                 label = prompt.label,
                 options = prompt.options,
-                hint = prompt.hint
+                hint = prompt.hint,
+                correlationId = prompt.correlationId
             ))
         }
 
@@ -217,7 +147,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             removeThinking()
             _uiState.value = _uiState.value.copy(
                 isThinking = false,
-                thinkingStage = ""
+                thinkingStage = "",
+                pendingActions = emptySet()
             )
             addMessage(ChatMessage.StreamErrorMsg(
                 severity = error.severity,
@@ -227,7 +158,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         wsClient.onToolApprovalRequest = { req ->
             removeThinking()
-            _uiState.value = _uiState.value.copy(isWaitingInput = true)
+            val cId = req.correlationId ?: "unknown_${System.currentTimeMillis()}"
+            val newPending = _uiState.value.pendingActions + cId
+            _uiState.value = _uiState.value.copy(pendingActions = newPending)
             addMessage(ChatMessage.ToolApprovalRequestMsg(
                 toolId = req.toolId,
                 toolName = req.toolName,
@@ -239,7 +172,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         wsClient.onAskUser = { req ->
             removeThinking()
-            _uiState.value = _uiState.value.copy(isWaitingInput = true)
+            val cId = req.correlationId ?: "unknown_${System.currentTimeMillis()}"
+            val newPending = _uiState.value.pendingActions + cId
+            _uiState.value = _uiState.value.copy(pendingActions = newPending)
             addMessage(ChatMessage.AskUserMsg(
                 title = req.title,
                 questions = req.questions,
@@ -249,7 +184,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         wsClient.onBrowserAuth = { req ->
             removeThinking()
-            _uiState.value = _uiState.value.copy(isWaitingInput = true)
+            val cId = req.correlationId ?: "unknown_${System.currentTimeMillis()}"
+            val newPending = _uiState.value.pendingActions + cId
+            _uiState.value = _uiState.value.copy(pendingActions = newPending)
             addMessage(ChatMessage.BrowserAuthMsg(
                 url = req.url,
                 code = req.code,
@@ -261,6 +198,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         wsClient.onChatMessageReceived = { chatMsg ->
             removeThinking()
             streamBuffer.clear()
+            _uiState.value = _uiState.value.copy(pendingActions = emptySet())
 
             when (chatMsg.messageType) {
                 "plan_summary" -> {
@@ -293,20 +231,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
 
         wsClient.onResponseReceived = { response ->
-            if (response.success && response.command == "set_mode") {
-                val mode = response.data?.get("mode")?.asString
-                if (mode != null) {
-                    _uiState.value = _uiState.value.copy(currentMode = mode)
-                }
-            }
-            if (response.command == "set_model" && response.success) {
-                val model = response.data?.get("model")?.asString
-                if (model != null) {
-                    _uiState.value = _uiState.value.copy(currentModel = model)
-                    addMessage(ChatMessage.SystemMessage("🔄 Modelo alterado para $model"))
-                }
-            }
-            Log.d("ChatVM", "Response: command=${response.command} success=${response.success}")
+            handleCommandResponse(response)
         }
 
         wsClient.onModelInfo = { info ->
@@ -330,7 +255,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             // ── isThinking = false when stream completes ──
             _uiState.value = _uiState.value.copy(
                 isThinking = false,
-                thinkingStage = ""
+                thinkingStage = "",
+                pendingActions = emptySet()
             )
             return
         }
@@ -376,6 +302,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // ── Public API ────────────────────────────────────────────
     fun connect() {
+        suppressAutoReconnect = false
         val host = prefs.host
         val port = prefs.port
         val secret = prefs.secret
@@ -414,8 +341,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (idx >= 0) {
             val prompt = msgs[idx] as ChatMessage.PromptInputMsg
             correlationId = prompt.correlationId
+            val newPending = _uiState.value.pendingActions - (correlationId ?: "")
             msgs[idx] = prompt.copy(isAnswered = true, answeredText = response)
-            _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
+            _uiState.value = _uiState.value.copy(messages = msgs, pendingActions = newPending)
         }
         // Send response via canonical StdinResponse with correlationId when available
         if (correlationId != null) {
@@ -434,12 +362,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val msg = msgs[idx] as ChatMessage.ToolApprovalRequestMsg
             if (msg.toolId == toolId) {
                 correlationId = msg.correlationId
+                val newPending = _uiState.value.pendingActions - (correlationId ?: "")
                 msgs[idx] = msg.copy(isAnswered = true, choice = choice)
-                _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
+                _uiState.value = _uiState.value.copy(messages = msgs, pendingActions = newPending)
             }
         }
-        // Use canonical contract: correlationId + approved boolean
-        val approved = choice.lowercase() in listOf("yes", "approve", "allow", "y", "sim")
+        // UI emits: once | session | deny. Keep legacy aliases for compatibility.
+        val normalizedChoice = choice.trim().lowercase()
+        val approved = normalizedChoice in listOf(
+            "once", "session", // current ToolApprovalCard values
+            "yes", "approve", "allow", "y", "sim" // legacy aliases
+        )
         if (correlationId != null) {
             wsClient.sendToolApprovalResponse(correlationId, approved)
         } else {
@@ -456,8 +389,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (idx >= 0) {
             val msg = msgs[idx] as ChatMessage.AskUserMsg
             correlationId = msg.correlationId
+            val newPending = _uiState.value.pendingActions - (correlationId ?: "")
             msgs[idx] = msg.copy(isAnswered = true)
-            _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
+            _uiState.value = _uiState.value.copy(messages = msgs, pendingActions = newPending)
         }
         if (correlationId != null) {
             wsClient.sendAskUserResponse(correlationId, answers)
@@ -480,8 +414,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (idx >= 0) {
             val msg = msgs[idx] as ChatMessage.BrowserAuthMsg
             correlationId = msg.correlationId
+            val newPending = _uiState.value.pendingActions - (correlationId ?: "")
             msgs[idx] = msg.copy(isAnswered = true)
-            _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
+            _uiState.value = _uiState.value.copy(messages = msgs, pendingActions = newPending)
         }
         // Send confirmation back via canonical StdinResponse with correlationId
         if (correlationId != null) {
@@ -498,8 +433,38 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             addMessage(ChatMessage.SystemMessage("⚠️ Sem conexão com o SLED."))
             return
         }
+
+        if (command !in SUPPORTED_QUICK_COMMANDS && command != "abort") {
+            addMessage(ChatMessage.SystemMessage("⚠️ Comando não suportado no daemon atual: $command"))
+            return
+        }
+
         wsClient.sendCommand(command, emptyMap())
         addMessage(ChatMessage.SystemMessage("⚡ $command"))
+    }
+
+    fun startNewChat() {
+        archiveCurrentChatSession(prefs, _uiState.value.messages)
+        clearChatHistory(prefs)
+
+        val current = _uiState.value
+        _uiState.value = current.copy(
+            messages = emptyList(),
+            isThinking = false,
+            thinkingStage = "",
+            pendingActions = emptySet()
+        )
+        streamBuffer.clear()
+
+        reconnectJob?.cancel()
+        reconnectAttempts = maxReconnectAttempts
+        suppressAutoReconnect = true
+        wsClient.disconnect()
+        reconnectAttempts = 0
+        suppressAutoReconnect = false
+
+        addMessage(ChatMessage.SystemMessage("🆕 Novo chat iniciado"))
+        connect()
     }
 
     fun setMode(mode: String) {
@@ -533,12 +498,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun retryConnection() {
+        suppressAutoReconnect = false
         reconnectAttempts = 0
         reconnectJob?.cancel()
         connect()
     }
 
     fun disconnect() {
+        suppressAutoReconnect = true
         reconnectJob?.cancel()
         reconnectAttempts = maxReconnectAttempts
         try {
@@ -592,28 +559,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private fun saveHistoryAsync() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                val array = org.json.JSONArray()
-                // Save last 50 basic messages to not overwhelm prefs
-                _uiState.value.messages.takeLast(50).forEach { msg ->
-                    val obj = org.json.JSONObject()
-                    when (msg) {
-                        is ChatMessage.UserMessage -> {
-                            obj.put("type", "user")
-                            obj.put("text", msg.text)
-                        }
-                        is ChatMessage.AssistantMessage -> {
-                            obj.put("type", "assistant")
-                            obj.put("text", msg.text)
-                        }
-                        is ChatMessage.SystemMessage -> {
-                            obj.put("type", "system")
-                            obj.put("text", msg.text)
-                        }
-                        else -> return@forEach
-                    }
-                    array.put(obj)
-                }
-                prefs.chatHistory = array.toString()
+                saveChatHistory(prefs, _uiState.value.messages)
             } catch (e: Exception) {
                 Log.e("ChatVM", "Error saving history", e)
             }
@@ -622,58 +568,74 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun loadHistory() {
         try {
-            val history = prefs.chatHistory
-            if (!history.isNullOrBlank()) {
-                val array = org.json.JSONArray(history)
-                val msgs = mutableListOf<ChatMessage>()
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    when (obj.getString("type")) {
-                        "user" -> msgs.add(ChatMessage.UserMessage(obj.getString("text")))
-                        "assistant" -> msgs.add(ChatMessage.AssistantMessage(obj.getString("text")))
-                        "system" -> msgs.add(ChatMessage.SystemMessage(obj.getString("text")))
-                    }
-                }
-                if (msgs.isNotEmpty()) {
-                    msgs.add(ChatMessage.SystemMessage("--- Histórico de Sessão Anterior ---"))
-                    _uiState.value = _uiState.value.copy(messages = msgs)
-                }
+            val historyMessages = loadChatHistory(prefs)
+            if (historyMessages.isNotEmpty()) {
+                _uiState.value = _uiState.value.copy(messages = historyMessages)
             }
         } catch (e: Exception) {
             Log.e("ChatVM", "Error loading history", e)
         }
     }
 
-    private fun parsePlanFromMetadata(metadata: com.google.gson.JsonObject): Plan {
-        val id = metadata.get("id")?.asString ?: ""
-        val goal = metadata.get("goal")?.asString ?: ""
-        val riskLevel = metadata.get("risk_level")?.asString ?: "unknown"
-        val stepsArray = metadata.getAsJsonArray("steps")
-        val steps = stepsArray?.map { stepJson ->
-            val stepObj = stepJson.asJsonObject
-            Step(
-                description = stepObj.get("description")?.asString ?: "",
-                action = stepObj.get("action")?.asString,
-                parameters = if (stepObj.has("parameters") && !stepObj.get("parameters").isJsonNull)
-                    stepObj.getAsJsonObject("parameters") else null
-            )
-        } ?: emptyList()
-        return Plan(id = id, goal = goal, steps = steps, riskLevel = riskLevel)
-    }
-
     override fun onCleared() {
         super.onCleared()
+        suppressAutoReconnect = true
         reconnectJob?.cancel()
         wsClient.disconnect()
     }
-}
 
-class ChatViewModelFactory(private val context: Context) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(ChatViewModel::class.java)) {
-            @Suppress("UNCHECKED_CAST")
-            return ChatViewModel(context) as T
+    private fun handleCommandResponse(response: ResponsePayload) {
+        if (!response.success) {
+            addMessage(
+                ChatMessage.SystemMessage(
+                    "❌ ${response.command}: ${response.error ?: "falhou"}"
+                )
+            )
+            Log.w("ChatVM", "Response error: command=${response.command} error=${response.error}")
+            return
         }
-        throw IllegalArgumentException("Unknown ViewModel class")
+
+        if (response.command == "set_mode") {
+            val mode = response.data?.get("mode")?.asString
+            if (mode != null) {
+                _uiState.value = _uiState.value.copy(currentMode = mode)
+            }
+        }
+
+        if (response.command == "set_model") {
+            val model = response.data?.get("model")?.asString
+            if (model != null) {
+                _uiState.value = _uiState.value.copy(currentModel = model)
+                addMessage(ChatMessage.SystemMessage("🔄 Modelo alterado para $model"))
+            }
+        }
+
+        if (response.command in SUPPORTED_QUICK_COMMANDS) {
+            val details = formatResponseData(response.data)
+            if (details.isNullOrBlank()) {
+                addMessage(ChatMessage.SystemMessage("✅ ${response.command} concluído"))
+            } else if (details.contains("\n")) {
+                addMessage(ChatMessage.StreamOutputMsg(details.lines()))
+            } else {
+                addMessage(ChatMessage.SystemMessage("✅ $details"))
+            }
+        }
+
+        Log.d("ChatVM", "Response: command=${response.command} success=${response.success}")
+    }
+
+    private fun formatResponseData(data: com.google.gson.JsonObject?): String? {
+        if (data == null || data.entrySet().isEmpty()) return null
+        return data.entrySet().joinToString("\n") { entry ->
+            "${entry.key}: ${jsonToText(entry.value)}"
+        }
+    }
+
+    private fun jsonToText(value: JsonElement): String {
+        return when {
+            value.isJsonNull -> "null"
+            value.isJsonPrimitive -> value.asJsonPrimitive.toString().trim('"')
+            else -> value.toString()
+        }
     }
 }
