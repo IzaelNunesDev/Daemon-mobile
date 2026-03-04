@@ -43,6 +43,7 @@ sealed class ChatMessage {
         val label: String,
         val options: List<String>?,
         val hint: String? = null,
+        val correlationId: String? = null,
         val isAnswered: Boolean = false,
         val answeredText: String? = null
     ) : ChatMessage()
@@ -214,6 +215,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         wsClient.onStreamError = { error ->
             removeThinking()
+            _uiState.value = _uiState.value.copy(
+                isThinking = false,
+                thinkingStage = ""
+            )
             addMessage(ChatMessage.StreamErrorMsg(
                 severity = error.severity,
                 message = error.message
@@ -322,6 +327,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 streamBuffer.clear()
             }
             removeThinking()
+            // ── isThinking = false when stream completes ──
+            _uiState.value = _uiState.value.copy(
+                isThinking = false,
+                thinkingStage = ""
+            )
             return
         }
 
@@ -397,16 +407,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun sendPromptResponse(response: String) {
-        // Mark prompt as answered
+        // Mark prompt as answered and extract correlationId
+        var correlationId: String? = null
         val msgs = _uiState.value.messages.toMutableList()
         val idx = msgs.indexOfLast { it is ChatMessage.PromptInputMsg && !(it as ChatMessage.PromptInputMsg).isAnswered }
         if (idx >= 0) {
             val prompt = msgs[idx] as ChatMessage.PromptInputMsg
+            correlationId = prompt.correlationId
             msgs[idx] = prompt.copy(isAnswered = true, answeredText = response)
             _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
         }
-        // Send response as a Message
-        wsClient.sendStdinResponse(response)
+        // Send response via canonical StdinResponse with correlationId when available
+        if (correlationId != null) {
+            wsClient.sendStdinResponse(correlationId, confirmed = true, answers = mapOf("text" to response))
+        } else {
+            wsClient.sendSimpleStdinResponse(response)
+        }
         _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Processando...")
     }
 
@@ -422,7 +438,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
             }
         }
-        wsClient.sendToolApprovalResponse(toolId, choice, correlationId)
+        // Use canonical contract: correlationId + approved boolean
+        val approved = choice.lowercase() in listOf("yes", "approve", "allow", "y", "sim")
+        if (correlationId != null) {
+            wsClient.sendToolApprovalResponse(correlationId, approved)
+        } else {
+            Log.w("ChatVM", "No correlationId for tool approval — daemon may not route this correctly")
+            wsClient.sendToolApprovalResponse(toolId, approved)  // fallback with toolId
+        }
         _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Processando...")
     }
 
@@ -436,7 +459,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             msgs[idx] = msg.copy(isAnswered = true)
             _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
         }
-        wsClient.sendAskUserResponse(answers, correlationId)
+        if (correlationId != null) {
+            wsClient.sendAskUserResponse(correlationId, answers)
+        } else {
+            Log.w("ChatVM", "No correlationId for AskUser response")
+            wsClient.sendSimpleStdinResponse(answers.values.firstOrNull() ?: "")
+        }
         _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Processando...")
     }
 
@@ -455,8 +483,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             msgs[idx] = msg.copy(isAnswered = true)
             _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
         }
-        // Send confirmation back with correlationId so bridge can resolve the pending request
-        wsClient.sendStdinResponse("\n")
+        // Send confirmation back via canonical StdinResponse with correlationId
+        if (correlationId != null) {
+            wsClient.sendStdinResponse(correlationId, confirmed = true)
+        } else {
+            Log.w("ChatVM", "No correlationId for BrowserAuth response")
+            wsClient.sendSimpleStdinResponse("\n")
+        }
         _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Aguardando autenticação...")
     }
 

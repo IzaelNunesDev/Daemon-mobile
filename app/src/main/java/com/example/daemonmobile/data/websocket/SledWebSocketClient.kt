@@ -286,42 +286,77 @@ class SledWebSocketClient {
         webSocket?.send(gson.toJson(msg))
     }
 
-    /** Send a ToolApprovalResponse with correlationId for ws-bridge routing */
-    fun sendToolApprovalResponse(toolId: String, choice: String, correlationId: String?) {
+    /** Send a ToolApprovalResponse with correlationId + approved (canonical contract) */
+    fun sendToolApprovalResponse(correlationId: String, approved: Boolean) {
         val payloadMap = mutableMapOf<String, Any>(
-            "tool_id" to toolId,
-            "choice" to choice
+            "correlationId" to correlationId,
+            "approved" to approved
         )
-        if (correlationId != null) payloadMap["correlationId"] = correlationId
-        
+
         val msg = mapOf(
             "type" to "ToolApprovalResponse",
             "payload" to payloadMap
         )
-        webSocket?.send(gson.toJson(msg))
+        val json = gson.toJson(msg)
+        Log.d("SledWS", "Sending ToolApprovalResponse: $json")
+        webSocket?.send(json)
     }
 
-    /** Send an AskUserResponse with correlationId for ws-bridge routing */
-    fun sendAskUserResponse(answers: Map<String, String>, correlationId: String?) {
+    /**
+     * Send an AskUserResponse (converged to StdinResponse canonical format).
+     * The daemon expects: { type: "StdinResponse", payload: { correlationId, confirmed, answers } }
+     */
+    fun sendAskUserResponse(correlationId: String, answers: Map<String, String>) {
         val payloadMap = mutableMapOf<String, Any>(
+            "correlationId" to correlationId,
+            "confirmed" to true,
             "answers" to answers
         )
-        if (correlationId != null) payloadMap["correlationId"] = correlationId
-        
-        val msg = mapOf(
-            "type" to "AskUserResponse",
-            "payload" to payloadMap
-        )
-        webSocket?.send(gson.toJson(msg))
-    }
 
-    /** Send a StdinResponse */
-    fun sendStdinResponse(text: String) {
         val msg = mapOf(
             "type" to "StdinResponse",
-            "payload" to mapOf("text" to text)
+            "payload" to payloadMap
         )
-        webSocket?.send(gson.toJson(msg))
+        val json = gson.toJson(msg)
+        Log.d("SledWS", "Sending AskUserResponse (StdinResponse): $json")
+        webSocket?.send(json)
+    }
+
+    /**
+     * Send a StdinResponse with full canonical contract fields.
+     * Used for BrowserAuth confirmations, PromptInput responses, and any interactive prompt.
+     */
+    fun sendStdinResponse(correlationId: String, confirmed: Boolean, answers: Map<String, String>? = null) {
+        val payloadMap = mutableMapOf<String, Any>(
+            "correlationId" to correlationId,
+            "confirmed" to confirmed
+        )
+        if (answers != null) payloadMap["answers"] = answers
+
+        val msg = mapOf(
+            "type" to "StdinResponse",
+            "payload" to payloadMap
+        )
+        val json = gson.toJson(msg)
+        Log.d("SledWS", "Sending StdinResponse: $json")
+        webSocket?.send(json)
+    }
+
+    /**
+     * Legacy convenience: send a simple text-based StdinResponse for PromptInput
+     * when there is no correlationId available (backward compat).
+     */
+    fun sendSimpleStdinResponse(text: String) {
+        val msg = mapOf(
+            "type" to "StdinResponse",
+            "payload" to mapOf(
+                "confirmed" to true,
+                "answers" to mapOf("text" to text)
+            )
+        )
+        val json = gson.toJson(msg)
+        Log.d("SledWS", "Sending simple StdinResponse: $json")
+        webSocket?.send(json)
     }
 
     fun disconnect() {
