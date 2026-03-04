@@ -65,18 +65,21 @@ sealed class ChatMessage {
         val toolName: String,
         val command: String?,
         val riskLevel: String?,
+        val correlationId: String? = null,
         val isAnswered: Boolean = false,
         val choice: String? = null
     ) : ChatMessage()
     data class AskUserMsg(
         val title: String,
         val questions: List<Question>,
+        val correlationId: String? = null,
         val isAnswered: Boolean = false
     ) : ChatMessage()
     data class BrowserAuthMsg(
         val url: String,
         val code: String?,
         val instruction: String?,
+        val correlationId: String? = null,
         val isAnswered: Boolean = false
     ) : ChatMessage()
 }
@@ -224,7 +227,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 toolId = req.toolId,
                 toolName = req.toolName,
                 command = req.command,
-                riskLevel = req.riskLevel
+                riskLevel = req.riskLevel,
+                correlationId = req.correlationId
             ))
         }
 
@@ -233,7 +237,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _uiState.value = _uiState.value.copy(isWaitingInput = true)
             addMessage(ChatMessage.AskUserMsg(
                 title = req.title,
-                questions = req.questions
+                questions = req.questions,
+                correlationId = req.correlationId
             ))
         }
 
@@ -243,7 +248,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             addMessage(ChatMessage.BrowserAuthMsg(
                 url = req.url,
                 code = req.code,
-                instruction = req.instruction
+                instruction = req.instruction,
+                correlationId = req.correlationId
             ))
         }
 
@@ -306,12 +312,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     // ── StreamChunk accumulation ──────────────────────────────
     private fun handleStreamChunk(chunk: StreamChunkPayload) {
         if (chunk.done) {
-            // Finalize: convert accumulated text to AssistantMessage
+            // Daemon does NOT emit ChatMessage after stream ends (§13 ARCHITECTURE.md)
+            // So we must convert the accumulated text to AssistantMessage ourselves
             if (streamBuffer.isNotEmpty()) {
-                // Remove the streaming msg
+                val finalText = streamBuffer.toString()
                 val msgs = _uiState.value.messages.filterNot { it is ChatMessage.StreamChunkMsg }
                 _uiState.value = _uiState.value.copy(messages = msgs)
-                // The final ChatMessage will arrive separately, so just clear
+                addMessage(ChatMessage.AssistantMessage(text = finalText))
                 streamBuffer.clear()
             }
             removeThinking()
@@ -404,39 +411,51 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun sendToolApproval(toolId: String, choice: String) {
+        var correlationId: String? = null
         val msgs = _uiState.value.messages.toMutableList()
         val idx = msgs.indexOfLast { it is ChatMessage.ToolApprovalRequestMsg && !(it as ChatMessage.ToolApprovalRequestMsg).isAnswered }
         if (idx >= 0) {
             val msg = msgs[idx] as ChatMessage.ToolApprovalRequestMsg
             if (msg.toolId == toolId) {
+                correlationId = msg.correlationId
                 msgs[idx] = msg.copy(isAnswered = true, choice = choice)
                 _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
             }
         }
-        wsClient.sendToolApprovalResponse(toolId, choice)
+        wsClient.sendToolApprovalResponse(toolId, choice, correlationId)
         _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Processando...")
     }
 
     fun sendAskUserResponse(answers: Map<String, String>) {
+        var correlationId: String? = null
         val msgs = _uiState.value.messages.toMutableList()
         val idx = msgs.indexOfLast { it is ChatMessage.AskUserMsg && !(it as ChatMessage.AskUserMsg).isAnswered }
         if (idx >= 0) {
             val msg = msgs[idx] as ChatMessage.AskUserMsg
+            correlationId = msg.correlationId
             msgs[idx] = msg.copy(isAnswered = true)
             _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
         }
-        wsClient.sendAskUserResponse(answers)
+        wsClient.sendAskUserResponse(answers, correlationId)
         _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Processando...")
     }
 
+    /** Open browser on the PC via daemon command, not on the phone */
+    fun openBrowserOnPc(url: String) {
+        wsClient.sendCommand("open_browser", mapOf("url" to url))
+    }
+
     fun sendBrowserAuthResponse() {
+        var correlationId: String? = null
         val msgs = _uiState.value.messages.toMutableList()
         val idx = msgs.indexOfLast { it is ChatMessage.BrowserAuthMsg && !(it as ChatMessage.BrowserAuthMsg).isAnswered }
         if (idx >= 0) {
             val msg = msgs[idx] as ChatMessage.BrowserAuthMsg
+            correlationId = msg.correlationId
             msgs[idx] = msg.copy(isAnswered = true)
             _uiState.value = _uiState.value.copy(messages = msgs, isWaitingInput = false)
         }
+        // Send confirmation back with correlationId so bridge can resolve the pending request
         wsClient.sendStdinResponse("\n")
         _uiState.value = _uiState.value.copy(isThinking = true, thinkingStage = "Aguardando autenticação...")
     }

@@ -196,18 +196,55 @@ class SledWebSocketClient {
                             }
                         }
                         "ToolApprovalRequest" -> {
-                            if (payload != null) {
-                                onToolApprovalRequest?.invoke(gson.fromJson(payload, ToolApprovalRequestPayload::class.java))
+                            // The ws-bridge sends two possible shapes:
+                            // Shape A (ws-bridge): { type, toolCall: {...}, correlationId: "..." }
+                            // Shape B (flat):      { type, payload: { tool_id, tool_name, command, risk_level, correlation_id } }
+                            // We handle both by checking for toolCall at root level first.
+                            val rootToolCall = jsonObj.getAsJsonObject("toolCall")
+                            val rootCorrelationId = jsonObj.get("correlationId")?.asString
+                            
+                            if (rootToolCall != null) {
+                                // Shape A: nested toolCall from ws-bridge MessageBus
+                                onToolApprovalRequest?.invoke(ToolApprovalRequestPayload(
+                                    toolId = rootToolCall.get("callId")?.asString 
+                                        ?: rootToolCall.get("id")?.asString ?: "",
+                                    toolName = rootToolCall.get("name")?.asString 
+                                        ?: rootToolCall.get("functionName")?.asString ?: "",
+                                    command = rootToolCall.getAsJsonObject("args")?.get("command")?.asString
+                                        ?: rootToolCall.get("args")?.toString(),
+                                    riskLevel = rootToolCall.get("riskLevel")?.asString ?: "medium",
+                                    correlationId = rootCorrelationId
+                                ))
+                            } else if (payload != null) {
+                                // Shape B: flat payload (already formatted by bridge)
+                                val parsed = gson.fromJson(payload, ToolApprovalRequestPayload::class.java)
+                                // Fallback: if correlationId was at root level
+                                val finalPayload = if (parsed.correlationId == null && rootCorrelationId != null) {
+                                    parsed.copy(correlationId = rootCorrelationId)
+                                } else parsed
+                                onToolApprovalRequest?.invoke(finalPayload)
                             }
                         }
                         "AskUser" -> {
                             if (payload != null) {
-                                onAskUser?.invoke(gson.fromJson(payload, AskUserPayload::class.java))
+                                val parsed = gson.fromJson(payload, AskUserPayload::class.java)
+                                // Fallback: correlationId might be at root level
+                                val rootCorrelationId = jsonObj.get("correlationId")?.asString
+                                val finalPayload = if (parsed.correlationId == null && rootCorrelationId != null) {
+                                    parsed.copy(correlationId = rootCorrelationId)
+                                } else parsed
+                                onAskUser?.invoke(finalPayload)
                             }
                         }
                         "BrowserAuth" -> {
                             if (payload != null) {
-                                onBrowserAuth?.invoke(gson.fromJson(payload, BrowserAuthPayload::class.java))
+                                val parsed = gson.fromJson(payload, BrowserAuthPayload::class.java)
+                                // Fallback: correlationId might be at root level
+                                val rootCorrelationId = jsonObj.get("correlationId")?.asString
+                                val finalPayload = if (parsed.correlationId == null && rootCorrelationId != null) {
+                                    parsed.copy(correlationId = rootCorrelationId)
+                                } else parsed
+                                onBrowserAuth?.invoke(finalPayload)
                             }
                         }
                         else -> {
@@ -249,20 +286,31 @@ class SledWebSocketClient {
         webSocket?.send(gson.toJson(msg))
     }
 
-    /** Send a ToolApprovalResponse */
-    fun sendToolApprovalResponse(toolId: String, choice: String) {
+    /** Send a ToolApprovalResponse with correlationId for ws-bridge routing */
+    fun sendToolApprovalResponse(toolId: String, choice: String, correlationId: String?) {
+        val payloadMap = mutableMapOf<String, Any>(
+            "tool_id" to toolId,
+            "choice" to choice
+        )
+        if (correlationId != null) payloadMap["correlationId"] = correlationId
+        
         val msg = mapOf(
             "type" to "ToolApprovalResponse",
-            "payload" to mapOf("tool_id" to toolId, "choice" to choice)
+            "payload" to payloadMap
         )
         webSocket?.send(gson.toJson(msg))
     }
 
-    /** Send an AskUserResponse */
-    fun sendAskUserResponse(answers: Map<String, String>) {
+    /** Send an AskUserResponse with correlationId for ws-bridge routing */
+    fun sendAskUserResponse(answers: Map<String, String>, correlationId: String?) {
+        val payloadMap = mutableMapOf<String, Any>(
+            "answers" to answers
+        )
+        if (correlationId != null) payloadMap["correlationId"] = correlationId
+        
         val msg = mapOf(
             "type" to "AskUserResponse",
-            "payload" to mapOf("answers" to answers)
+            "payload" to payloadMap
         )
         webSocket?.send(gson.toJson(msg))
     }

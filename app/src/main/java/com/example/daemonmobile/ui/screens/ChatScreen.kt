@@ -198,6 +198,9 @@ fun ChatScreen(
                                 url = msg.url,
                                 code = msg.code,
                                 instruction = msg.instruction,
+                                onOpenBrowser = { url ->
+                                    viewModel.openBrowserOnPc(url)
+                                },
                                 onDone = {
                                     viewModel.sendBrowserAuthResponse()
                                 }

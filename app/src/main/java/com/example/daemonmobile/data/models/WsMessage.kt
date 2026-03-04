@@ -108,7 +108,8 @@ data class ToolApprovalRequestPayload(
     @SerializedName("tool_id") val toolId: String,
     @SerializedName("tool_name") val toolName: String,
     val command: String?,
-    @SerializedName("risk_level") val riskLevel: String?
+    @SerializedName("risk_level") val riskLevel: String?,
+    @SerializedName("correlation_id") val correlationId: String? = null
 )
 
 /** 13. AskUser — multi-field wizard request */
@@ -120,13 +121,15 @@ data class Question(
 
 data class AskUserPayload(
     val title: String,
-    val questions: List<Question>
+    val questions: List<Question>,
+    @SerializedName("correlation_id") val correlationId: String? = null
 )
 
 /** 14. BrowserAuth — OAuth browser request */
 data class BrowserAuthPayload(
     val url: String,
     val code: String?,
-    val instruction: String?
+    val instruction: String?,
+    @SerializedName("correlation_id") val correlationId: String? = null
 )
 

@@ -12,7 +12,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -26,10 +25,10 @@ fun BrowserAuthCard(
     url: String,
     code: String?,
     instruction: String?,
+    onOpenBrowser: (String) -> Unit,
     onDone: () -> Unit
 ) {
     var isSubmitted by remember { mutableStateOf(false) }
-    val uriHandler = LocalUriHandler.current
 
     Column(
         modifier = Modifier
@@ -110,7 +109,7 @@ fun BrowserAuthCard(
             }
         }
 
-        // Open Browser Button
+        // Open Browser on PC Button
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -118,23 +117,29 @@ fun BrowserAuthCard(
                 .background(AuthBlue.copy(alpha = 0.15f), RoundedCornerShape(9.dp))
                 .border(1.dp, AuthBlue.copy(alpha = 0.4f), RoundedCornerShape(9.dp))
                 .clickable {
-                    try {
-                        uriHandler.openUri(url)
-                    } catch (e: Exception) {
-                        // ignore or log
-                    }
+                    onOpenBrowser(url)
                 }
                 .padding(vertical = 10.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "Abrir Navegador",
+                text = "Abrir no PC 🖥️",
                 color = AuthBlue,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = MonoFamily
             )
         }
+
+        // URL display for reference
+        Text(
+            text = url,
+            color = T4,
+            fontSize = 8.sp,
+            fontFamily = MonoFamily,
+            maxLines = 2,
+            modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
+        )
 
         // Done Button
         Box(
