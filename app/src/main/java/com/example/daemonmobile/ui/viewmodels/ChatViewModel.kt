@@ -257,7 +257,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
 
         streamBuffer.append(chunk.content)
-        removeThinking()
+        
+        // Apenas remover a animação de "pensando", mas MANTER isThinking = true
+        // para que o botão "Interromper" continue visível durante execução
+        val filteredMsgs = _uiState.value.messages.filterNot { it is ChatMessage.ThinkingMessage }
+        _uiState.value = _uiState.value.copy(messages = filteredMsgs)
 
         // Update or create StreamChunkMsg
         val msgs = _uiState.value.messages.toMutableList()
